@@ -1,5 +1,5 @@
 import streamlit as st
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 import pytesseract
 import re
 from dateutil import parser
@@ -9,6 +9,8 @@ import io
 import subprocess
 import sys
 import os
+import cv2
+import numpy as np
 
 # Enhanced Tesseract diagnostics
 def get_tesseract_diagnostics():
@@ -87,7 +89,27 @@ with st.sidebar:
     st.header("Settings")
     if TESSERACT_AVAILABLE:
         confidence_threshold = st.slider("OCR Confidence Threshold", 0, 100, 50, help="Adjust OCR sensitivity")
+        
+        # Preprocessing options
+        st.subheader("🖼️ Image Preprocessing")
+        preprocessing_method = st.selectbox(
+            "Preprocessing Method",
+            options=[
+                "none",
+                "basic_threshold",
+                "adaptive_threshold", 
+                "otsu_threshold",
+                "contrast_enhancement",
+                "noise_reduction",
+                "morphological_ops",
+                "multi_scale"
+            ],
+            help="Choose preprocessing method for better OCR"
+        )
+        
         threshold_value = st.slider("Binarization Threshold", 0, 255, 180, help="Adjust threshold for image preprocessing")
+        contrast_factor = st.slider("Contrast Enhancement", 0.5, 3.0, 1.5, help="Enhance image contrast")
+        
         psm_mode = st.selectbox(
             "Tesseract Page Segmentation Mode (PSM)",
             options=[
@@ -95,11 +117,15 @@ with st.sidebar:
                 (6, "Assume a single uniform block of text"),
                 (11, "Sparse text. Find as much text as possible."),
                 (4, "Assume a single column of text"),
-                (7, "Treat the image as a single text line")
+                (7, "Treat the image as a single text line"),
+                (8, "Single word"),
+                (9, "Single word in a circle"),
+                (10, "Single character")
             ],
             format_func=lambda x: f"{x[0]}: {x[1]}",
             index=1
         )
+        
         use_original = st.checkbox("Use original image (no preprocessing) for OCR", value=False)
         show_raw_ocr = st.checkbox("Always show raw OCR output", value=True, help="Display detailed OCR results")
     else:
@@ -117,6 +143,76 @@ with st.sidebar:
     """)
 
 uploaded_file = st.file_uploader("Upload an event flyer image", type=["jpg", "jpeg", "png", "bmp", "tiff"])
+
+def preprocess_image_advanced(image, method, threshold=180, contrast_factor=1.5):
+    """Advanced preprocessing with multiple methods"""
+    if method == "none":
+        return image
+    
+    # Convert PIL to OpenCV format
+    img_array = np.array(image)
+    if len(img_array.shape) == 3:
+        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+    else:
+        gray = img_array
+    
+    if method == "basic_threshold":
+        _, processed = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+    
+    elif method == "adaptive_threshold":
+        processed = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    
+    elif method == "otsu_threshold":
+        _, processed = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    elif method == "contrast_enhancement":
+        # Enhance contrast using PIL
+        enhancer = ImageEnhance.Contrast(image)
+        enhanced = enhancer.enhance(contrast_factor)
+        # Convert to grayscale and threshold
+        gray_pil = ImageOps.grayscale(enhanced)
+        processed = np.array(gray_pil)
+        _, processed = cv2.threshold(processed, threshold, 255, cv2.THRESH_BINARY)
+    
+    elif method == "noise_reduction":
+        # Apply Gaussian blur to reduce noise
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, processed = cv2.threshold(blurred, threshold, 255, cv2.THRESH_BINARY)
+    
+    elif method == "morphological_ops":
+        # Apply morphological operations
+        kernel = np.ones((2, 2), np.uint8)
+        _, thresh = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
+        processed = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        processed = cv2.morphologyEx(processed, cv2.MORPH_OPEN, kernel)
+    
+    elif method == "multi_scale":
+        # Try multiple preprocessing methods and return the best one
+        methods = ["basic_threshold", "adaptive_threshold", "otsu_threshold"]
+        best_result = None
+        best_score = 0
+        
+        for m in methods:
+            try:
+                result = preprocess_image_advanced(image, m, threshold, contrast_factor)
+                # Simple heuristic: count non-zero pixels (more text = better)
+                score = np.count_nonzero(result)
+                if score > best_score:
+                    best_score = score
+                    best_result = result
+            except:
+                continue
+        
+        if best_result is not None:
+            processed = best_result
+        else:
+            processed = gray
+    
+    else:
+        processed = gray
+    
+    # Convert back to PIL Image
+    return Image.fromarray(processed)
 
 def preprocess_image(image, threshold):
     gray = ImageOps.grayscale(image)
@@ -184,56 +280,59 @@ if uploaded_file:
         st.subheader("📸 Uploaded Image")
         image = Image.open(uploaded_file)
         st.image(image, caption="Uploaded Image", use_column_width=True)
+        
         # Preprocess image for better OCR
-        preprocessed_image = preprocess_image(image, threshold_value)
-        st.image(preprocessed_image, caption=f"Preprocessed for OCR (Threshold: {threshold_value})", use_column_width=True, channels="GRAY")
+        if preprocessing_method != "none":
+            preprocessed_image = preprocess_image_advanced(image, preprocessing_method, threshold_value, contrast_factor)
+            st.image(preprocessed_image, caption=f"Preprocessed: {preprocessing_method} (Threshold: {threshold_value})", use_column_width=True, channels="GRAY")
+        else:
+            preprocessed_image = image
+            st.info("No preprocessing applied.")
+        
         # Decide which image to use for OCR
         if use_original:
             ocr_image = image
             st.info("Using original image for OCR.")
         else:
             ocr_image = preprocessed_image
-            st.info("Using preprocessed image for OCR.")
+            st.info(f"Using {preprocessing_method} preprocessed image for OCR.")
         
         # Process image with OCR
         if TESSERACT_AVAILABLE:
             try:
-                # Enhanced OCR with detailed output
                 st.subheader("🔍 OCR Processing")
-                
-                # Use preprocessed image for OCR
                 custom_config = f'--psm {psm_mode[0]}'
                 text = pytesseract.image_to_string(ocr_image, config=custom_config)
                 
-                # Get OCR data with confidence scores
                 try:
                     ocr_data = pytesseract.image_to_data(ocr_image, output_type=pytesseract.Output.DICT, config=custom_config)
                     confidence_scores = [score for score in ocr_data['conf'] if score > 0]
                     avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
-                    
                     st.metric("Average OCR Confidence", f"{avg_confidence:.1f}%")
                     st.metric("Words Detected", len([word for word in ocr_data['text'] if word.strip()]))
+                    
+                    # Show preprocessing effectiveness
+                    if len(text.strip()) > 0:
+                        st.success(f"✅ OCR Success! Extracted {len(text.split())} words")
+                    else:
+                        st.warning("⚠️ No text extracted. Try different preprocessing or PSM mode.")
+                        
                 except Exception as e:
                     st.warning(f"Could not get detailed OCR data: {str(e)}")
                 
-                # Always show raw OCR output
                 st.subheader("📝 Raw OCR Output")
                 st.text_area("Raw OCR Text:", value=text, height=200, key="raw_ocr_output")
                 
-                # Show detailed OCR data if available
                 if 'ocr_data' in locals():
                     with st.expander("🔍 Detailed OCR Data"):
                         st.write("**OCR Data Structure:**")
-                        st.json({k: v[:10] if isinstance(v, list) and len(v) > 10 else v 
-                               for k, v in ocr_data.items()})
-                        
-                        # Show words with confidence scores
+                        st.json({k: v[:10] if isinstance(v, list) and len(v) > 10 else v for k, v in ocr_data.items()})
                         st.write("**Words with Confidence Scores:**")
                         words_with_conf = []
                         for i, (text_word, conf) in enumerate(zip(ocr_data['text'], ocr_data['conf'])):
                             if text_word.strip():
                                 words_with_conf.append(f"'{text_word}': {conf}%")
-                        st.text('\n'.join(words_with_conf[:50]))  # Show first 50 words
+                        st.text('\n'.join(words_with_conf[:50]))
                         if len(words_with_conf) > 50:
                             st.write(f"... and {len(words_with_conf) - 50} more words")
                     
