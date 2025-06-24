@@ -87,6 +87,19 @@ with st.sidebar:
     st.header("Settings")
     if TESSERACT_AVAILABLE:
         confidence_threshold = st.slider("OCR Confidence Threshold", 0, 100, 50, help="Adjust OCR sensitivity")
+        threshold_value = st.slider("Binarization Threshold", 0, 255, 180, help="Adjust threshold for image preprocessing")
+        psm_mode = st.selectbox(
+            "Tesseract Page Segmentation Mode (PSM)",
+            options=[
+                (3, "Default (Fully automatic page segmentation)"),
+                (6, "Assume a single uniform block of text"),
+                (11, "Sparse text. Find as much text as possible."),
+                (4, "Assume a single column of text"),
+                (7, "Treat the image as a single text line")
+            ],
+            format_func=lambda x: f"{x[0]}: {x[1]}",
+            index=1
+        )
         show_raw_ocr = st.checkbox("Always show raw OCR output", value=True, help="Display detailed OCR results")
     else:
         st.error("⚠️ Tesseract OCR not available")
@@ -104,11 +117,8 @@ with st.sidebar:
 
 uploaded_file = st.file_uploader("Upload an event flyer image", type=["jpg", "jpeg", "png", "bmp", "tiff"])
 
-def preprocess_image(image):
-    # Convert to grayscale
+def preprocess_image(image, threshold):
     gray = ImageOps.grayscale(image)
-    # Apply binary thresholding
-    threshold = 180
     bw = gray.point(lambda x: 255 if x > threshold else 0, mode='1')
     return bw
 
@@ -174,8 +184,8 @@ if uploaded_file:
         image = Image.open(uploaded_file)
         st.image(image, caption="Uploaded Image", use_column_width=True)
         # Preprocess image for better OCR
-        preprocessed_image = preprocess_image(image)
-        st.image(preprocessed_image, caption="Preprocessed for OCR", use_column_width=True, channels="GRAY")
+        preprocessed_image = preprocess_image(image, threshold_value)
+        st.image(preprocessed_image, caption=f"Preprocessed for OCR (Threshold: {threshold_value})", use_column_width=True, channels="GRAY")
         
         # Process image with OCR
         if TESSERACT_AVAILABLE:
@@ -184,11 +194,12 @@ if uploaded_file:
                 st.subheader("🔍 OCR Processing")
                 
                 # Use preprocessed image for OCR
-                text = pytesseract.image_to_string(preprocessed_image)
+                custom_config = f'--psm {psm_mode[0]}'
+                text = pytesseract.image_to_string(preprocessed_image, config=custom_config)
                 
                 # Get OCR data with confidence scores
                 try:
-                    ocr_data = pytesseract.image_to_data(preprocessed_image, output_type=pytesseract.Output.DICT)
+                    ocr_data = pytesseract.image_to_data(preprocessed_image, output_type=pytesseract.Output.DICT, config=custom_config)
                     confidence_scores = [score for score in ocr_data['conf'] if score > 0]
                     avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
                     
