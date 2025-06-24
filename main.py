@@ -7,6 +7,13 @@ from datetime import timedelta
 from icalendar import Calendar, Event
 import io
 
+# Check if Tesseract is available
+try:
+    pytesseract.get_tesseract_version()
+    TESSERACT_AVAILABLE = True
+except Exception:
+    TESSERACT_AVAILABLE = False
+
 st.set_page_config(
     page_title="Image to Calendar Event Extractor",
     page_icon="📅",
@@ -19,7 +26,11 @@ st.markdown("Upload an event flyer image to extract event details and create a c
 # Sidebar for settings
 with st.sidebar:
     st.header("Settings")
-    confidence_threshold = st.slider("OCR Confidence Threshold", 0, 100, 50, help="Adjust OCR sensitivity")
+    if TESSERACT_AVAILABLE:
+        confidence_threshold = st.slider("OCR Confidence Threshold", 0, 100, 50, help="Adjust OCR sensitivity")
+    else:
+        st.error("⚠️ Tesseract OCR not available")
+        st.info("OCR functionality is currently unavailable. Please contact support.")
     
     st.header("About")
     st.markdown("""
@@ -96,15 +107,21 @@ if uploaded_file:
         st.image(image, caption="Uploaded Image", use_column_width=True)
         
         # Process image with OCR
-        try:
-            text = pytesseract.image_to_string(image)
-            
-            st.subheader("📝 Extracted Text")
-            with st.expander("View extracted text"):
-                st.text(text)
+        if TESSERACT_AVAILABLE:
+            try:
+                text = pytesseract.image_to_string(image)
                 
-        except Exception as e:
-            st.error(f"Error processing image: {str(e)}")
+                st.subheader("📝 Extracted Text")
+                with st.expander("View extracted text"):
+                    st.text(text)
+                    
+            except Exception as e:
+                st.error(f"Error processing image: {str(e)}")
+                st.info("Please try uploading a clearer image or contact support if the issue persists.")
+                st.stop()
+        else:
+            st.error("❌ OCR not available")
+            st.info("Tesseract OCR is not installed. Please contact support to enable OCR functionality.")
             st.stop()
     
     with col2:
