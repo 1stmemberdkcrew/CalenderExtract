@@ -100,6 +100,7 @@ with st.sidebar:
             format_func=lambda x: f"{x[0]}: {x[1]}",
             index=1
         )
+        use_original = st.checkbox("Use original image (no preprocessing) for OCR", value=False)
         show_raw_ocr = st.checkbox("Always show raw OCR output", value=True, help="Display detailed OCR results")
     else:
         st.error("⚠️ Tesseract OCR not available")
@@ -186,6 +187,13 @@ if uploaded_file:
         # Preprocess image for better OCR
         preprocessed_image = preprocess_image(image, threshold_value)
         st.image(preprocessed_image, caption=f"Preprocessed for OCR (Threshold: {threshold_value})", use_column_width=True, channels="GRAY")
+        # Decide which image to use for OCR
+        if use_original:
+            ocr_image = image
+            st.info("Using original image for OCR.")
+        else:
+            ocr_image = preprocessed_image
+            st.info("Using preprocessed image for OCR.")
         
         # Process image with OCR
         if TESSERACT_AVAILABLE:
@@ -195,11 +203,11 @@ if uploaded_file:
                 
                 # Use preprocessed image for OCR
                 custom_config = f'--psm {psm_mode[0]}'
-                text = pytesseract.image_to_string(preprocessed_image, config=custom_config)
+                text = pytesseract.image_to_string(ocr_image, config=custom_config)
                 
                 # Get OCR data with confidence scores
                 try:
-                    ocr_data = pytesseract.image_to_data(preprocessed_image, output_type=pytesseract.Output.DICT, config=custom_config)
+                    ocr_data = pytesseract.image_to_data(ocr_image, output_type=pytesseract.Output.DICT, config=custom_config)
                     confidence_scores = [score for score in ocr_data['conf'] if score > 0]
                     avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
                     
