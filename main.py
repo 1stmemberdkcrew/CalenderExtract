@@ -6,6 +6,61 @@ from dateutil import parser
 from datetime import timedelta
 from icalendar import Calendar, Event
 import io
+import subprocess
+import sys
+import os
+
+# Enhanced Tesseract diagnostics
+def get_tesseract_diagnostics():
+    """Get comprehensive Tesseract diagnostic information"""
+    diagnostics = {}
+    
+    # Check if pytesseract can import
+    try:
+        diagnostics['pytesseract_import'] = "✅ Success"
+    except ImportError as e:
+        diagnostics['pytesseract_import'] = f"❌ Failed: {str(e)}"
+        return diagnostics
+    
+    # Get Tesseract version
+    try:
+        version = pytesseract.get_tesseract_version()
+        diagnostics['tesseract_version'] = f"✅ {version}"
+    except Exception as e:
+        diagnostics['tesseract_version'] = f"❌ Failed: {str(e)}"
+    
+    # Get Tesseract path
+    try:
+        tesseract_path = pytesseract.get_tesseract_path()
+        diagnostics['tesseract_path'] = f"✅ {tesseract_path}"
+    except Exception as e:
+        diagnostics['tesseract_path'] = f"❌ Failed: {str(e)}"
+    
+    # Check if tesseract command is available in PATH
+    try:
+        result = subprocess.run(['tesseract', '--version'], 
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            version_line = result.stdout.split('\n')[0]
+            diagnostics['system_tesseract'] = f"✅ {version_line}"
+        else:
+            diagnostics['system_tesseract'] = f"❌ Command failed: {result.stderr}"
+    except FileNotFoundError:
+        diagnostics['system_tesseract'] = "❌ Tesseract not found in PATH"
+    except Exception as e:
+        diagnostics['system_tesseract'] = f"❌ Error: {str(e)}"
+    
+    # Get available languages
+    try:
+        languages = pytesseract.get_languages()
+        diagnostics['available_languages'] = f"✅ {', '.join(languages)}"
+    except Exception as e:
+        diagnostics['available_languages'] = f"❌ Failed: {str(e)}"
+    
+    return diagnostics
+
+# Get diagnostics
+tesseract_diagnostics = get_tesseract_diagnostics()
 
 # Check if Tesseract is available
 try:
@@ -23,11 +78,19 @@ st.set_page_config(
 st.title("📅 Image to Calendar Event Extractor")
 st.markdown("Upload an event flyer image to extract event details and create a calendar invite.")
 
-# Sidebar for settings
+# Diagnostic information in sidebar
 with st.sidebar:
+    st.header("🔧 System Diagnostics")
+    
+    # Show Tesseract diagnostics
+    with st.expander("Tesseract OCR Diagnostics", expanded=True):
+        for key, value in tesseract_diagnostics.items():
+            st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+    
     st.header("Settings")
     if TESSERACT_AVAILABLE:
         confidence_threshold = st.slider("OCR Confidence Threshold", 0, 100, 50, help="Adjust OCR sensitivity")
+        show_raw_ocr = st.checkbox("Always show raw OCR output", value=True, help="Display detailed OCR results")
     else:
         st.error("⚠️ Tesseract OCR not available")
         st.info("OCR functionality is currently unavailable. Please contact support.")
@@ -109,11 +172,43 @@ if uploaded_file:
         # Process image with OCR
         if TESSERACT_AVAILABLE:
             try:
+                # Enhanced OCR with detailed output
+                st.subheader("🔍 OCR Processing")
+                
+                # Get raw OCR text
                 text = pytesseract.image_to_string(image)
                 
-                st.subheader("📝 Extracted Text")
-                with st.expander("View extracted text"):
-                    st.text(text)
+                # Get OCR data with confidence scores
+                try:
+                    ocr_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+                    confidence_scores = [score for score in ocr_data['conf'] if score > 0]
+                    avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
+                    
+                    st.metric("Average OCR Confidence", f"{avg_confidence:.1f}%")
+                    st.metric("Words Detected", len([word for word in ocr_data['text'] if word.strip()]))
+                except Exception as e:
+                    st.warning(f"Could not get detailed OCR data: {str(e)}")
+                
+                # Always show raw OCR output
+                st.subheader("📝 Raw OCR Output")
+                st.text_area("Raw OCR Text:", value=text, height=200, key="raw_ocr_output")
+                
+                # Show detailed OCR data if available
+                if 'ocr_data' in locals():
+                    with st.expander("🔍 Detailed OCR Data"):
+                        st.write("**OCR Data Structure:**")
+                        st.json({k: v[:10] if isinstance(v, list) and len(v) > 10 else v 
+                               for k, v in ocr_data.items()})
+                        
+                        # Show words with confidence scores
+                        st.write("**Words with Confidence Scores:**")
+                        words_with_conf = []
+                        for i, (text_word, conf) in enumerate(zip(ocr_data['text'], ocr_data['conf'])):
+                            if text_word.strip():
+                                words_with_conf.append(f"'{text_word}': {conf}%")
+                        st.text('\n'.join(words_with_conf[:50]))  # Show first 50 words
+                        if len(words_with_conf) > 50:
+                            st.write(f"... and {len(words_with_conf) - 50} more words")
                     
             except Exception as e:
                 st.error(f"Error processing image: {str(e)}")
@@ -175,6 +270,16 @@ if uploaded_file:
             st.warning("⚠️ Could not extract event time from the image.")
             st.info("Please check if the image contains clear date and time information.")
     
-    # Show raw text for debugging
-    with st.expander("🔍 Debug: Raw OCR Text"):
-        st.text(text) 
+    # Additional debug information
+    with st.expander("🔧 Debug Information"):
+        st.write("**Image Information:**")
+        st.write(f"- Format: {image.format}")
+        st.write(f"- Mode: {image.mode}")
+        st.write(f"- Size: {image.size}")
+        
+        st.write("**Processing Information:**")
+        st.write(f"- Tesseract Available: {TESSERACT_AVAILABLE}")
+        if TESSERACT_AVAILABLE:
+            st.write(f"- Text Length: {len(text)} characters")
+            st.write(f"- Lines: {len(text.split(chr(10)))}")
+            st.write(f"- Words: {len(text.split())}") 
