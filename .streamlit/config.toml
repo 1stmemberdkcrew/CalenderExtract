@@ -4,4 +4,7 @@ enableCORS = false
 enableXsrfProtection = false
 
 [browser]
-gatherUsageStats = false 
+gatherUsageStats = false
+
+[global]
+developmentMode = false 
