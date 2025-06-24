@@ -1,5 +1,5 @@
 import streamlit as st
-from PIL import Image
+from PIL import Image, ImageOps
 import pytesseract
 import re
 from dateutil import parser
@@ -78,15 +78,12 @@ st.set_page_config(
 st.title("📅 Image to Calendar Event Extractor")
 st.markdown("Upload an event flyer image to extract event details and create a calendar invite.")
 
-# Diagnostic information in sidebar
+# Sidebar: Always show Tesseract diagnostics at the top
 with st.sidebar:
-    st.header("🔧 System Diagnostics")
-    
-    # Show Tesseract diagnostics
-    with st.expander("Tesseract OCR Diagnostics", expanded=True):
-        for key, value in tesseract_diagnostics.items():
-            st.write(f"**{key.replace('_', ' ').title()}:** {value}")
-    
+    st.header("🔧 Tesseract OCR Diagnostics (Always Visible)")
+    for key, value in tesseract_diagnostics.items():
+        st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+    st.divider()
     st.header("Settings")
     if TESSERACT_AVAILABLE:
         confidence_threshold = st.slider("OCR Confidence Threshold", 0, 100, 50, help="Adjust OCR sensitivity")
@@ -106,6 +103,14 @@ with st.sidebar:
     """)
 
 uploaded_file = st.file_uploader("Upload an event flyer image", type=["jpg", "jpeg", "png", "bmp", "tiff"])
+
+def preprocess_image(image):
+    # Convert to grayscale
+    gray = ImageOps.grayscale(image)
+    # Apply binary thresholding
+    threshold = 180
+    bw = gray.point(lambda x: 255 if x > threshold else 0, mode='1')
+    return bw
 
 def extract_title_from_text(text):
     lines = [line.strip() for line in text.split('\n') if line.strip()]
@@ -168,6 +173,9 @@ if uploaded_file:
         st.subheader("📸 Uploaded Image")
         image = Image.open(uploaded_file)
         st.image(image, caption="Uploaded Image", use_column_width=True)
+        # Preprocess image for better OCR
+        preprocessed_image = preprocess_image(image)
+        st.image(preprocessed_image, caption="Preprocessed for OCR", use_column_width=True, channels="GRAY")
         
         # Process image with OCR
         if TESSERACT_AVAILABLE:
@@ -175,12 +183,12 @@ if uploaded_file:
                 # Enhanced OCR with detailed output
                 st.subheader("🔍 OCR Processing")
                 
-                # Get raw OCR text
-                text = pytesseract.image_to_string(image)
+                # Use preprocessed image for OCR
+                text = pytesseract.image_to_string(preprocessed_image)
                 
                 # Get OCR data with confidence scores
                 try:
-                    ocr_data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+                    ocr_data = pytesseract.image_to_data(preprocessed_image, output_type=pytesseract.Output.DICT)
                     confidence_scores = [score for score in ocr_data['conf'] if score > 0]
                     avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
                     
