@@ -3,6 +3,4 @@ pytesseract==0.3.10
 python-dateutil==2.8.2
 icalendar==5.0.7
 Pillow>=10.2.0
-tkinter-tooltip==2.0.0
-customtkinter==5.2.0
 streamlit==1.28.1 
