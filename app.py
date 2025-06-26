@@ -1,5 +1,5 @@
 import streamlit as st
-from PIL import Image, ImageOps, ImageEnhance, ImageFilter, ImageDraw, ImageFont
+from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 import pytesseract
 import re
 from dateutil import parser
@@ -11,10 +11,6 @@ import sys
 import os
 import cv2
 import numpy as np
-from skimage import measure, filters, morphology
-from skimage.feature import canny
-from skimage.transform import hough_line, hough_line_peaks
-import matplotlib.pyplot as plt
 
 # Enhanced Tesseract diagnostics
 def get_tesseract_diagnostics():
@@ -133,11 +129,6 @@ with st.sidebar:
         use_original = st.checkbox("Use original image (no preprocessing) for OCR", value=False)
         show_raw_ocr = st.checkbox("Always show raw OCR output", value=True, help="Display detailed OCR results")
         
-        # AI Analysis options
-        st.subheader("🤖 AI Analysis")
-        enable_quality_assessment = st.checkbox("Enable Image Quality Assessment", value=True)
-        enable_layout_analysis = st.checkbox("Enable Layout Analysis", value=True)
-        enable_font_analysis = st.checkbox("Enable Font Analysis", value=True)
     else:
         st.error("⚠️ Tesseract OCR not available")
         st.info("OCR functionality is currently unavailable. Please contact support.")
@@ -150,7 +141,7 @@ with st.sidebar:
     - Automatic date/time detection
     - Event title extraction
     - Calendar invite generation
-    - AI-powered image analysis
+    - Enhanced image preprocessing
     """)
 
 uploaded_file = st.file_uploader("Upload an event flyer image", type=["jpg", "jpeg", "png", "bmp", "tiff"])
@@ -284,235 +275,6 @@ def create_calendar_invite(title, description, start_time, end_time):
     cal.add_component(event)
     return cal.to_ical()
 
-def assess_image_quality(image):
-    """Assess image quality for OCR"""
-    img_array = np.array(image)
-    if len(img_array.shape) == 3:
-        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    else:
-        gray = img_array
-    
-    # Calculate various quality metrics
-    quality_metrics = {}
-    
-    # 1. Resolution assessment
-    height, width = gray.shape
-    quality_metrics['resolution'] = {
-        'width': width,
-        'height': height,
-        'pixels': width * height,
-        'score': min(100, (width * height) / 10000)  # Score based on pixel count
-    }
-    
-    # 2. Contrast assessment
-    contrast = np.std(gray)
-    quality_metrics['contrast'] = {
-        'value': contrast,
-        'score': min(100, contrast / 2)  # Higher contrast = better
-    }
-    
-    # 3. Sharpness assessment (using Laplacian variance)
-    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-    quality_metrics['sharpness'] = {
-        'value': laplacian_var,
-        'score': min(100, laplacian_var / 10)  # Higher variance = sharper
-    }
-    
-    # 4. Noise assessment
-    # Apply Gaussian blur and compare with original
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    noise = np.mean(np.abs(gray.astype(float) - blurred.astype(float)))
-    quality_metrics['noise'] = {
-        'value': noise,
-        'score': max(0, 100 - noise * 2)  # Lower noise = better
-    }
-    
-    # 5. Overall quality score
-    overall_score = (
-        quality_metrics['resolution']['score'] * 0.2 +
-        quality_metrics['contrast']['score'] * 0.3 +
-        quality_metrics['sharpness']['score'] * 0.3 +
-        quality_metrics['noise']['score'] * 0.2
-    )
-    
-    quality_metrics['overall_score'] = min(100, max(0, overall_score))
-    
-    # 6. Quality recommendations
-    recommendations = []
-    if quality_metrics['resolution']['score'] < 50:
-        recommendations.append("📏 Low resolution - consider using a higher resolution image")
-    if quality_metrics['contrast']['score'] < 50:
-        recommendations.append("🌓 Low contrast - try enhancing contrast or using different lighting")
-    if quality_metrics['sharpness']['score'] < 50:
-        recommendations.append("📸 Image is blurry - ensure camera is steady and focused")
-    if quality_metrics['noise']['score'] < 50:
-        recommendations.append("🔇 High noise - try reducing camera ISO or improving lighting")
-    
-    quality_metrics['recommendations'] = recommendations
-    
-    return quality_metrics
-
-def analyze_layout(image):
-    """Analyze image layout and text regions"""
-    img_array = np.array(image)
-    if len(img_array.shape) == 3:
-        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    else:
-        gray = img_array
-    
-    layout_analysis = {}
-    
-    # 1. Text region detection using MSER
-    mser = cv2.MSER_create()
-    regions, _ = mser.detectRegions(gray)
-    
-    # Filter regions by size
-    min_area = 100
-    max_area = gray.shape[0] * gray.shape[1] // 4
-    valid_regions = [region for region in regions if min_area < len(region) < max_area]
-    
-    layout_analysis['text_regions'] = {
-        'count': len(valid_regions),
-        'total_area': sum(len(region) for region in valid_regions),
-        'coverage_percent': (sum(len(region) for region in valid_regions) / (gray.shape[0] * gray.shape[1])) * 100
-    }
-    
-    # 2. Line detection using Hough transform
-    edges = canny(gray, sigma=2)
-    lines = hough_line(edges)
-    peaks = hough_line_peaks(*lines)
-    
-    # Analyze line orientations
-    angles = []
-    for _, angle, dist in zip(*peaks):
-        angles.append(np.degrees(angle))
-    
-    layout_analysis['line_analysis'] = {
-        'horizontal_lines': len([a for a in angles if abs(a) < 10 or abs(a - 180) < 10]),
-        'vertical_lines': len([a for a in angles if abs(a - 90) < 10 or abs(a + 90) < 10]),
-        'total_lines': len(angles)
-    }
-    
-    # 3. Layout type classification
-    if layout_analysis['text_regions']['coverage_percent'] > 30:
-        layout_type = "Text-heavy"
-    elif layout_analysis['line_analysis']['horizontal_lines'] > layout_analysis['line_analysis']['vertical_lines']:
-        layout_type = "Horizontal layout"
-    elif layout_analysis['line_analysis']['vertical_lines'] > layout_analysis['line_analysis']['horizontal_lines']:
-        layout_type = "Vertical layout"
-    else:
-        layout_type = "Mixed layout"
-    
-    layout_analysis['layout_type'] = layout_type
-    
-    return layout_analysis
-
-def analyze_font_characteristics(image, ocr_data):
-    """Analyze font characteristics from OCR data"""
-    if not ocr_data or 'conf' not in ocr_data:
-        return {}
-    
-    font_analysis = {}
-    
-    # Extract text blocks with confidence > 0
-    valid_blocks = []
-    for i, conf in enumerate(ocr_data['conf']):
-        if conf > 0 and ocr_data['text'][i].strip():
-            valid_blocks.append({
-                'text': ocr_data['text'][i],
-                'conf': conf,
-                'height': ocr_data['height'][i],
-                'width': ocr_data['width'][i]
-            })
-    
-    if not valid_blocks:
-        return {'error': 'No valid text blocks found'}
-    
-    # 1. Font size analysis
-    heights = [block['height'] for block in valid_blocks]
-    font_analysis['font_sizes'] = {
-        'min': min(heights),
-        'max': max(heights),
-        'avg': np.mean(heights),
-        'std': np.std(heights)
-    }
-    
-    # 2. Font size categories
-    avg_height = font_analysis['font_sizes']['avg']
-    if avg_height < 20:
-        size_category = "Small"
-    elif avg_height < 40:
-        size_category = "Medium"
-    elif avg_height < 60:
-        size_category = "Large"
-    else:
-        size_category = "Very Large"
-    
-    font_analysis['size_category'] = size_category
-    
-    # 3. Text density analysis
-    total_text_length = sum(len(block['text']) for block in valid_blocks)
-    total_area = sum(block['height'] * block['width'] for block in valid_blocks)
-    
-    font_analysis['text_density'] = {
-        'characters_per_pixel': total_text_length / total_area if total_area > 0 else 0,
-        'total_characters': total_text_length,
-        'total_area': total_area
-    }
-    
-    # 4. Font style hints (based on text characteristics)
-    style_hints = []
-    
-    # Check for all caps
-    all_caps_count = sum(1 for block in valid_blocks if block['text'].isupper())
-    if all_caps_count > len(valid_blocks) * 0.7:
-        style_hints.append("All caps text detected")
-    
-    # Check for mixed case
-    mixed_case_count = sum(1 for block in valid_blocks if not block['text'].isupper() and not block['text'].islower())
-    if mixed_case_count > len(valid_blocks) * 0.5:
-        style_hints.append("Mixed case text detected")
-    
-    # Check for numbers
-    number_count = sum(1 for block in valid_blocks if any(c.isdigit() for c in block['text']))
-    if number_count > len(valid_blocks) * 0.3:
-        style_hints.append("Numerical content detected")
-    
-    font_analysis['style_hints'] = style_hints
-    
-    return font_analysis
-
-def get_ocr_recommendations(quality_metrics, layout_analysis, font_analysis):
-    """Generate OCR recommendations based on analysis"""
-    recommendations = []
-    
-    # Quality-based recommendations
-    if quality_metrics['overall_score'] < 50:
-        recommendations.append("⚠️ Poor image quality detected. Consider:")
-        recommendations.append("   • Using a higher resolution image")
-        recommendations.append("   • Improving lighting conditions")
-        recommendations.append("   • Ensuring camera is steady and focused")
-    
-    # Layout-based recommendations
-    if layout_analysis['text_regions']['coverage_percent'] < 10:
-        recommendations.append("📝 Low text coverage detected. Try:")
-        recommendations.append("   • Ensuring text is clearly visible")
-        recommendations.append("   • Avoiding heavy backgrounds")
-    
-    if layout_analysis['layout_type'] == "Vertical layout":
-        recommendations.append("📐 Vertical layout detected. Consider using PSM mode 4 or 6")
-    
-    # Font-based recommendations
-    if font_analysis.get('size_category') == "Small":
-        recommendations.append("🔍 Small font detected. Try:")
-        recommendations.append("   • Using higher resolution image")
-        recommendations.append("   • Zooming in on text areas")
-    
-    if "All caps text detected" in font_analysis.get('style_hints', []):
-        recommendations.append("🔤 All caps text detected. This may affect OCR accuracy")
-    
-    return recommendations
-
 if uploaded_file:
     col1, col2 = st.columns([1, 1])
     
@@ -520,54 +282,6 @@ if uploaded_file:
         st.subheader("📸 Uploaded Image")
         image = Image.open(uploaded_file)
         st.image(image, caption="Uploaded Image", use_column_width=True)
-        
-        # AI Analysis Section
-        if enable_quality_assessment or enable_layout_analysis:
-            st.subheader("🤖 AI Analysis")
-            
-            # Image Quality Assessment
-            if enable_quality_assessment:
-                with st.expander("📊 Image Quality Assessment", expanded=True):
-                    quality_metrics = assess_image_quality(image)
-                    
-                    # Display quality score
-                    col_q1, col_q2 = st.columns(2)
-                    with col_q1:
-                        st.metric("Overall Quality Score", f"{quality_metrics['overall_score']:.1f}/100")
-                    with col_q2:
-                        if quality_metrics['overall_score'] >= 80:
-                            st.success("Excellent quality")
-                        elif quality_metrics['overall_score'] >= 60:
-                            st.info("Good quality")
-                        elif quality_metrics['overall_score'] >= 40:
-                            st.warning("Fair quality")
-                        else:
-                            st.error("Poor quality")
-                    
-                    # Detailed metrics
-                    st.write("**Detailed Metrics:**")
-                    st.write(f"• Resolution: {quality_metrics['resolution']['width']}x{quality_metrics['resolution']['height']} ({quality_metrics['resolution']['score']:.1f}/100)")
-                    st.write(f"• Contrast: {quality_metrics['contrast']['value']:.1f} ({quality_metrics['contrast']['score']:.1f}/100)")
-                    st.write(f"• Sharpness: {quality_metrics['sharpness']['value']:.1f} ({quality_metrics['sharpness']['score']:.1f}/100)")
-                    st.write(f"• Noise: {quality_metrics['noise']['value']:.1f} ({quality_metrics['noise']['score']:.1f}/100)")
-                    
-                    # Recommendations
-                    if quality_metrics['recommendations']:
-                        st.write("**Recommendations:**")
-                        for rec in quality_metrics['recommendations']:
-                            st.write(rec)
-            
-            # Layout Analysis
-            if enable_layout_analysis:
-                with st.expander("📐 Layout Analysis", expanded=True):
-                    layout_analysis = analyze_layout(image)
-                    
-                    st.write(f"**Layout Type:** {layout_analysis['layout_type']}")
-                    st.write(f"**Text Regions:** {layout_analysis['text_regions']['count']} detected")
-                    st.write(f"**Text Coverage:** {layout_analysis['text_regions']['coverage_percent']:.1f}%")
-                    st.write(f"**Lines Detected:** {layout_analysis['line_analysis']['total_lines']} total")
-                    st.write(f"  - Horizontal: {layout_analysis['line_analysis']['horizontal_lines']}")
-                    st.write(f"  - Vertical: {layout_analysis['line_analysis']['vertical_lines']}")
         
         # Preprocess image for better OCR
         if preprocessing_method != "none":
@@ -598,37 +312,6 @@ if uploaded_file:
                     avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0
                     st.metric("Average OCR Confidence", f"{avg_confidence:.1f}%")
                     st.metric("Words Detected", len([word for word in ocr_data['text'] if word.strip()]))
-                    
-                    # Font Analysis
-                    if enable_font_analysis and ocr_data:
-                        with st.expander("🔤 Font Analysis", expanded=True):
-                            font_analysis = analyze_font_characteristics(image, ocr_data)
-                            
-                            if 'error' not in font_analysis:
-                                st.write(f"**Font Size Category:** {font_analysis['size_category']}")
-                                st.write(f"**Font Size Range:** {font_analysis['font_sizes']['min']:.1f} - {font_analysis['font_sizes']['max']:.1f} pixels")
-                                st.write(f"**Average Font Size:** {font_analysis['font_sizes']['avg']:.1f} pixels")
-                                st.write(f"**Text Density:** {font_analysis['text_density']['characters_per_pixel']:.6f} chars/pixel")
-                                
-                                if font_analysis['style_hints']:
-                                    st.write("**Style Hints:**")
-                                    for hint in font_analysis['style_hints']:
-                                        st.write(f"• {hint}")
-                            else:
-                                st.warning("Font analysis not available")
-                    
-                    # Generate recommendations
-                    if enable_quality_assessment and enable_layout_analysis:
-                        quality_metrics = assess_image_quality(image)
-                        layout_analysis = analyze_layout(image)
-                        font_analysis = analyze_font_characteristics(image, ocr_data) if ocr_data else {}
-                        
-                        recommendations = get_ocr_recommendations(quality_metrics, layout_analysis, font_analysis)
-                        
-                        if recommendations:
-                            with st.expander("💡 OCR Recommendations", expanded=True):
-                                for rec in recommendations:
-                                    st.write(rec)
                     
                     # Show preprocessing effectiveness
                     if len(text.strip()) > 0:
