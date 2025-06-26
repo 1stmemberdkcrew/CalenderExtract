@@ -196,7 +196,25 @@ with st.sidebar:
     - Enhanced image preprocessing
     """)
 
-uploaded_file = st.file_uploader("Upload an event flyer image", type=["jpg", "jpeg", "png", "bmp", "tiff"])
+# Add a user note above the uploader
+st.markdown("""
+**Tip:** You can drag and drop an image file here from your computer. 
+If you want to use an image from a web page, right-click and save it first, then drag it in. 
+
+*Supported formats: JPG, JPEG, PNG, BMP, TIFF.*
+""")
+
+# Make the uploader area visually larger
+uploaded_file = st.file_uploader(
+    "Upload an event flyer image (drag & drop supported)",
+    type=["jpg", "jpeg", "png", "bmp", "tiff"],
+    label_visibility="visible",
+    key="main_image_uploader",
+    help="Drag and drop or click to select an image file."
+)
+
+# Add extra vertical space below the uploader for visual emphasis
+st.markdown("<div style='height: 24px'></div>", unsafe_allow_html=True)
 
 def preprocess_image_advanced(image, method, threshold=180, contrast_factor=1.5):
     """Advanced preprocessing with multiple methods"""
