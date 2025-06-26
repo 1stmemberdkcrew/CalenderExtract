@@ -596,7 +596,13 @@ if uploaded_file:
     with col1:
         st.subheader("📸 Uploaded Image")
         image = Image.open(uploaded_file)
-        st.image(image, caption="Uploaded Image", use_column_width=True)
+        # Convert to PNG in memory for best OCR accuracy
+        png_image = image.convert("RGB")
+        png_bytes = io.BytesIO()
+        png_image.save(png_bytes, format="PNG")
+        png_bytes.seek(0)
+        image = Image.open(png_bytes)
+        st.image(image, caption="Uploaded Image (converted to PNG for best OCR accuracy)", use_column_width=True)
         
         # Preprocess image for better OCR
         if preprocessing_method != "none":
